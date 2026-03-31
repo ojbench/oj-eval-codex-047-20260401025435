@@ -227,8 +227,34 @@ public:
         // Cache robot number once available
         if (robot_num_cache <= 0) robot_num_cache = monitor->get_robot_number();
 
-        // Attraction-repulsion planner with safety scaling
-        Vec v_next = find_safe_velocity();
+        // If last round had any warnings, fall back to round-robin single mover
+        Vec v_next(0.0, 0.0);
+        if (monitor->get_warning()) {
+            int mover_id = (step_count % (robot_num_cache > 0 ? robot_num_cache : 1));
+            if (id == mover_id) {
+                // Be conservative: only consider others stationary
+                Vec v_des = desired_towards_target();
+                // Scale down until safe vs stationary others
+                double lo = 0.0, hi = 1.0;
+                Vec best(0.0, 0.0);
+                for (int it = 0; it < 22; ++it) {
+                    double mid = (lo + hi) * 0.5;
+                    Vec v_mid = v_des * mid;
+                    if (safe_against_all_stationary(v_mid)) {
+                        best = v_mid;
+                        lo = mid;
+                    } else {
+                        hi = mid;
+                    }
+                }
+                v_next = best;
+            } else {
+                v_next = Vec(0.0, 0.0);
+            }
+        } else {
+            // Normal mode: attraction-repulsion with safety scaling
+            v_next = find_safe_velocity();
+        }
 
         // Ensure speed cap strictly respected (with a tiny margin)
         double sp2 = v_next.norm_sqr();
