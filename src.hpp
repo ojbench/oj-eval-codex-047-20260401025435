@@ -147,7 +147,39 @@ private:
                 hi = mid;
             }
         }
-        return best;
+        if (best.norm_sqr() > 1e-16) return best;
+
+        // Angular search as fallback: try rotated directions around v_des
+        const double angles[] = {0.25, -0.25, 0.5, -0.5, 0.75, -0.75, 1.0, -1.0};
+        Vec best_angle_v(0.0, 0.0);
+        double best_gain = 0.0;
+        for (double ang : angles) {
+            Vec v_rot = (v_des.norm() > 1e-9 ? v_des : Vec(v_max, 0.0)).rotate(ang);
+            // Cap
+            double sp2r = v_rot.norm_sqr();
+            if (sp2r > vmax2) {
+                v_rot = v_rot * (v_max / std::sqrt(sp2r));
+            }
+            // Scale via binary search
+            lo = 0.0; hi = 1.0;
+            Vec cand(0.0, 0.0);
+            for (int it2 = 0; it2 < 18; ++it2) {
+                double mid2 = (lo + hi) * 0.5;
+                Vec v_mid2 = v_rot * mid2;
+                if (safe_against_all(v_mid2)) {
+                    cand = v_mid2;
+                    lo = mid2;
+                } else {
+                    hi = mid2;
+                }
+            }
+            double gain = cand.norm();
+            if (gain > best_gain + 1e-9) {
+                best_gain = gain;
+                best_angle_v = cand;
+            }
+        }
+        return best_angle_v;
     }
 
 public:
