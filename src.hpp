@@ -92,17 +92,49 @@ private:
         return true;
     }
 
-    // Find a safe velocity by scaling down towards target
+    // Compute repulsive velocity from nearby robots to reduce collision risk
+    Vec repulsive_component() const {
+        Vec rep(0.0, 0.0);
+        int n = robot_num_cache > 0 ? robot_num_cache : monitor->get_robot_number();
+        double base_safe = 0.3; // base buffer beyond contact distance
+        double k_rep = 1.0;     // repulsion gain
+        for (int j = 0; j < n; ++j) {
+            if (j == id) continue;
+            Vec pos_j = monitor->get_pos_cur(j);
+            double r_j = monitor->get_r(j);
+            Vec d = pos_cur - pos_j;
+            double dist = d.norm();
+            double contact = r + r_j;
+            double safe = contact + base_safe;
+            if (dist < safe) {
+                double strength = k_rep * (safe - dist) / safe;
+                Vec away = d / dist; // normalized
+                rep += away * (strength * v_max);
+            }
+        }
+        // Break symmetry with a small id-based rotation
+        double bias = (id % 2 == 0) ? 0.25 : -0.25;
+        return rep.rotate(bias);
+    }
+
+    // Find a safe velocity by combining attraction and repulsion, then scale down if needed
     Vec find_safe_velocity() const {
         Vec v_des = desired_towards_target();
-        // Quick accept
-        if (safe_against_all(v_des)) return v_des;
+        Vec v_try = v_des + repulsive_component();
+        // Cap to vmax before safety check
+        double sp2 = v_try.norm_sqr();
+        double vmax2 = v_max * v_max;
+        if (sp2 > vmax2) {
+            double scale = v_max / std::sqrt(sp2);
+            v_try = v_try * scale;
+        }
+        if (safe_against_all(v_try)) return v_try;
         // Binary search best scaling factor in [0,1]
         double lo = 0.0, hi = 1.0;
         Vec best(0.0, 0.0);
         for (int it = 0; it < 20; ++it) {
             double mid = (lo + hi) * 0.5;
-            Vec v_mid = v_des * mid;
+            Vec v_mid = v_try * mid;
             if (safe_against_all(v_mid)) {
                 best = v_mid;
                 lo = mid;
@@ -119,18 +151,8 @@ public:
         // Cache robot number once available
         if (robot_num_cache <= 0) robot_num_cache = monitor->get_robot_number();
 
-        // Simple safe scheduler: only one robot moves per round, others stop
-        int current_round = step_count;
-        int mover_id = robot_num_cache > 0 ? (current_round % robot_num_cache) : 0;
-
-        Vec v_next(0.0, 0.0);
-
-        if ((id == mover_id)) {
-            // Move towards target while ensuring no collision with stationary others
-            v_next = find_safe_velocity();
-        } else {
-            v_next = Vec(0.0, 0.0);
-        }
+        // Attraction-repulsion planner with safety scaling
+        Vec v_next = find_safe_velocity();
 
         // Ensure speed cap strictly respected (with a tiny margin)
         double sp2 = v_next.norm_sqr();
@@ -149,4 +171,3 @@ public:
 
 
 #endif //PPCA_SRC_HPP
-
