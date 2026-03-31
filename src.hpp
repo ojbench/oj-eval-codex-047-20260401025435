@@ -93,6 +93,39 @@ private:
         return true;
     }
 
+    // Stationary-others safety check (pessimistic fallback)
+    bool safe_against_all_stationary(const Vec &v_candidate) const {
+        int n = robot_num_cache > 0 ? robot_num_cache : monitor->get_robot_number();
+        for (int j = 0; j < n; ++j) {
+            if (j == id) continue;
+            Vec pos_j = monitor->get_pos_cur(j);
+            double r_j = monitor->get_r(j);
+            Vec delta_pos = pos_cur - pos_j;
+            Vec delta_v = v_candidate;
+            double dv_norm = delta_v.norm();
+            if (dv_norm < 1e-12) {
+                double min_dis_sqr = delta_pos.norm_sqr();
+                double delta_r = r + r_j;
+                if (!(min_dis_sqr > delta_r * delta_r - EPSILON)) return false;
+                continue;
+            }
+            double project = delta_pos.dot(delta_v);
+            if (project < 0) {
+                project /= -dv_norm;
+                double delta_r = r + r_j;
+                double min_dis_sqr;
+                if (project < dv_norm * TIME_INTERVAL) {
+                    min_dis_sqr = delta_pos.norm_sqr() - project * project;
+                } else {
+                    Vec end_delta = delta_pos + delta_v * TIME_INTERVAL;
+                    min_dis_sqr = end_delta.norm_sqr();
+                }
+                if (!(min_dis_sqr > delta_r * delta_r - EPSILON)) return false;
+            }
+        }
+        return true;
+    }
+
     // Compute repulsive velocity from nearby robots to reduce collision risk
     Vec repulsive_component() const {
         Vec rep(0.0, 0.0);
@@ -134,6 +167,9 @@ private:
             v_try = v_try * 0.7;
         }
         if (safe_against_all(v_try)) return v_try;
+        // Try even stronger damping
+        Vec v_damped = v_try * 0.5;
+        if (safe_against_all(v_damped)) return v_damped;
         // Binary search best scaling factor in [0,1]
         double lo = 0.0, hi = 1.0;
         Vec best(0.0, 0.0);
@@ -179,7 +215,10 @@ private:
                 best_angle_v = cand;
             }
         }
-        return best_angle_v;
+        if (best_angle_v.norm_sqr() > 1e-16) return best_angle_v;
+
+        // Absolute fallback: stop if no safe movement found
+        return Vec(0.0, 0.0);
     }
 
 public:
