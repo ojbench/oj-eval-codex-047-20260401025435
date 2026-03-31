@@ -49,13 +49,14 @@ private:
         return dir * speed;
     }
 
-    // Check if candidate velocity v is safe against robot j (assuming j stays stationary this step)
+    // Check if candidate velocity v is safe against robot j, assuming j keeps last velocity
     bool safe_against_robot_j(const Vec &v_candidate, int j_id) const {
         if (j_id == id) return true;
         Vec pos_j = monitor->get_pos_cur(j_id);
         double r_j = monitor->get_r(j_id);
+        Vec v_j = monitor->get_v_cur(j_id);
         Vec delta_pos = pos_cur - pos_j;
-        Vec delta_v = v_candidate; // other assumed 0 when not moving
+        Vec delta_v = v_candidate - v_j; // relative velocity
 
         // If relative speed is near zero, distance must be safe now
         double dv_norm = delta_v.norm();
@@ -82,7 +83,7 @@ private:
         return min_dis_sqr > delta_r * delta_r - EPSILON;
     }
 
-    // Check if candidate velocity is safe against all other robots (assuming others are stationary this step)
+    // Check if candidate velocity is safe against all other robots (others keep last velocity)
     bool safe_against_all(const Vec &v_candidate) const {
         int n = robot_num_cache > 0 ? robot_num_cache : monitor->get_robot_number();
         for (int j = 0; j < n; ++j) {
@@ -127,6 +128,10 @@ private:
         if (sp2 > vmax2) {
             double scale = v_max / std::sqrt(sp2);
             v_try = v_try * scale;
+        }
+        // If last round had warnings globally, be more conservative
+        if (monitor->get_warning()) {
+            v_try = v_try * 0.7;
         }
         if (safe_against_all(v_try)) return v_try;
         // Binary search best scaling factor in [0,1]
